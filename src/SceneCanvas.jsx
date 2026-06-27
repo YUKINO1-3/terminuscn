@@ -1,5 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+
+const farmImageName = 'loc_farm.gif'
+
+function isFarmImage(src) {
+  return typeof src === 'string' && src.includes(farmImageName)
+}
 
 function makeGabledRoof() {
   const geometry = new THREE.BufferGeometry()
@@ -40,31 +46,55 @@ function addBox(parent, size, position, material, castShadow = true) {
   return mesh
 }
 
-export default function SceneCanvas({ language }) {
+function FarmSceneCanvas({ language }) {
   const canvasRef = useRef(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
     const container = canvas.parentElement
+    const cameraTarget = new THREE.Vector3(0, 1.8, -0.4)
+    const orbit = {
+      azimuth: Math.atan2(11, 14),
+      polar: Math.acos((8 - cameraTarget.y) / 19.5),
+      radius: 19.5,
+      minPolar: 0.58,
+      maxPolar: 1.35,
+      minRadius: 11,
+      maxRadius: 27,
+      dragging: false,
+      pointerId: null,
+      lastX: 0,
+      lastY: 0,
+    }
+    const renderState = {
+      terminalFocused: false,
+      activeUntil: 0,
+      lastRenderAt: 0,
+      lastSmokeAt: 0,
+    }
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x9bd7ee)
     scene.fog = new THREE.Fog(0x9bd7ee, 18, 38)
 
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100)
     camera.position.set(11, 8, 14)
-    camera.lookAt(0, 1.7, 0)
+    camera.lookAt(cameraTarget)
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      powerPreference: 'low-power',
+    })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25))
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.type = THREE.BasicShadowMap
     renderer.outputColorSpace = THREE.SRGBColorSpace
 
     scene.add(new THREE.HemisphereLight(0xdff6ff, 0x496d31, 2.1))
     const sunlight = new THREE.DirectionalLight(0xfff1c4, 3.5)
     sunlight.position.set(-8, 14, 10)
     sunlight.castShadow = true
-    sunlight.shadow.mapSize.set(1024, 1024)
+    sunlight.shadow.mapSize.set(512, 512)
     sunlight.shadow.camera.left = -14
     sunlight.shadow.camera.right = 14
     sunlight.shadow.camera.top = 14
@@ -175,13 +205,86 @@ export default function SceneCanvas({ language }) {
     })
     smokeMaterial.dispose()
 
-    const pointer = new THREE.Vector2()
-    const onPointerMove = (event) => {
-      const bounds = canvas.getBoundingClientRect()
-      pointer.x = ((event.clientX - bounds.left) / bounds.width - 0.5) * 2
-      pointer.y = ((event.clientY - bounds.top) / bounds.height - 0.5) * 2
+    function updateCamera() {
+      const sinPolar = Math.sin(orbit.polar)
+      camera.position.set(
+        cameraTarget.x + orbit.radius * sinPolar * Math.sin(orbit.azimuth),
+        cameraTarget.y + orbit.radius * Math.cos(orbit.polar),
+        cameraTarget.z + orbit.radius * sinPolar * Math.cos(orbit.azimuth),
+      )
+      camera.lookAt(cameraTarget)
     }
+
+    function clampOrbit() {
+      orbit.polar = THREE.MathUtils.clamp(orbit.polar, orbit.minPolar, orbit.maxPolar)
+      orbit.radius = THREE.MathUtils.clamp(orbit.radius, orbit.minRadius, orbit.maxRadius)
+    }
+
+    function wakeRenderer(duration = 900) {
+      renderState.activeUntil = Math.max(renderState.activeUntil, performance.now() + duration)
+    }
+
+    updateCamera()
+
+    const onPointerDown = (event) => {
+      orbit.dragging = true
+      orbit.pointerId = event.pointerId
+      orbit.lastX = event.clientX
+      orbit.lastY = event.clientY
+      canvas.setPointerCapture(event.pointerId)
+      wakeRenderer(1600)
+    }
+
+    const onPointerMove = (event) => {
+      if (!orbit.dragging || event.pointerId !== orbit.pointerId) {
+        return
+      }
+
+      const deltaX = event.clientX - orbit.lastX
+      const deltaY = event.clientY - orbit.lastY
+      orbit.lastX = event.clientX
+      orbit.lastY = event.clientY
+      orbit.azimuth -= deltaX * 0.006
+      orbit.polar += deltaY * 0.005
+      clampOrbit()
+      wakeRenderer(1600)
+    }
+
+    const onPointerUp = (event) => {
+      if (event.pointerId !== orbit.pointerId) {
+        return
+      }
+
+      orbit.dragging = false
+      orbit.pointerId = null
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId)
+      }
+      wakeRenderer()
+    }
+
+    const onWheel = (event) => {
+      event.preventDefault()
+      orbit.radius += event.deltaY * 0.012
+      clampOrbit()
+      wakeRenderer(1600)
+    }
+
+    const onFocusIn = (event) => {
+      renderState.terminalFocused = Boolean(event.target.closest?.('#term'))
+    }
+
+    const onFocusOut = () => {
+      renderState.terminalFocused = false
+      wakeRenderer()
+    }
+    canvas.addEventListener('pointerdown', onPointerDown)
     canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerup', onPointerUp)
+    canvas.addEventListener('pointercancel', onPointerUp)
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
 
     function resize() {
       const width = Math.max(container.clientWidth, 1)
@@ -189,6 +292,7 @@ export default function SceneCanvas({ language }) {
       renderer.setSize(width, height, false)
       camera.aspect = width / height
       camera.updateProjectionMatrix()
+      wakeRenderer()
     }
 
     const resizeObserver = new ResizeObserver(resize)
@@ -197,22 +301,39 @@ export default function SceneCanvas({ language }) {
 
     const clock = new THREE.Clock()
     renderer.setAnimationLoop(() => {
-      const time = clock.getElapsedTime()
-      camera.position.x += (11 + pointer.x * 0.8 - camera.position.x) * 0.025
-      camera.position.y += (8 - pointer.y * 0.35 - camera.position.y) * 0.025
-      camera.lookAt(0, 1.7, 0)
+      if (document.hidden) {
+        return
+      }
 
-      smokePuffs.forEach((puff, index) => {
-        const travel = (time * 0.42 + puff.userData.offset) % 4
-        puff.position.set(
-          -1.82 + Math.sin(time * 0.7 + index) * 0.16 + travel * 0.07,
-          5.45 + travel,
-          -1.78,
-        )
-        const scale = 0.72 + travel * 0.18
-        puff.scale.setScalar(scale)
-        puff.material.opacity = 0.58 * (1 - travel / 4)
-      })
+      const now = performance.now()
+      const isActive = orbit.dragging || now < renderState.activeUntil
+      const targetFps = isActive ? 45 : renderState.terminalFocused ? 8 : 18
+      const frameInterval = 1000 / targetFps
+
+      if (now - renderState.lastRenderAt < frameInterval) {
+        return
+      }
+
+      const time = clock.getElapsedTime()
+      const smokeInterval = renderState.terminalFocused && !isActive ? 250 : 1000 / 18
+      const shouldUpdateSmoke = now - renderState.lastSmokeAt >= smokeInterval
+      renderState.lastRenderAt = now
+      updateCamera()
+
+      if (shouldUpdateSmoke) {
+        renderState.lastSmokeAt = now
+        smokePuffs.forEach((puff, index) => {
+          const travel = (time * 0.42 + puff.userData.offset) % 4
+          puff.position.set(
+            -1.82 + Math.sin(time * 0.7 + index) * 0.16 + travel * 0.07,
+            5.45 + travel,
+            -1.78,
+          )
+          const scale = 0.72 + travel * 0.18
+          puff.scale.setScalar(scale)
+          puff.material.opacity = 0.58 * (1 - travel / 4)
+        })
+      }
 
       renderer.render(scene, camera)
     })
@@ -220,7 +341,13 @@ export default function SceneCanvas({ language }) {
     return () => {
       renderer.setAnimationLoop(null)
       resizeObserver.disconnect()
+      canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerup', onPointerUp)
+      canvas.removeEventListener('pointercancel', onPointerUp)
+      canvas.removeEventListener('wheel', onWheel)
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
       scene.traverse((object) => {
         object.geometry?.dispose()
         if (Array.isArray(object.material)) {
@@ -235,9 +362,45 @@ export default function SceneCanvas({ language }) {
 
   return (
     <canvas
-      id="scene"
+      id="scene-canvas"
       ref={canvasRef}
+      tabIndex={0}
       aria-label={language === 'zh' ? '草地上的三维房屋场景' : '3D house on a grassy field'}
     />
+  )
+}
+
+export default function SceneCanvas({ language }) {
+  const imageRef = useRef(null)
+  const [showFarmCanvas, setShowFarmCanvas] = useState(true)
+  const farmImageSrc = `${import.meta.env.BASE_URL}static/img/${farmImageName}`
+
+  useEffect(() => {
+    const image = imageRef.current
+
+    function syncSceneMode() {
+      setShowFarmCanvas(isFarmImage(image.getAttribute('src')))
+    }
+
+    const observer = new MutationObserver(syncSceneMode)
+    observer.observe(image, { attributes: true, attributeFilter: ['src'] })
+    syncSceneMode()
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+
+  return (
+    <div className="scene-display">
+      <img
+        id="scene"
+        ref={imageRef}
+        src={farmImageSrc}
+        alt=""
+        className={showFarmCanvas ? 'scene-image-hidden' : undefined}
+      />
+      {showFarmCanvas && <FarmSceneCanvas language={language} />}
+    </div>
   )
 }

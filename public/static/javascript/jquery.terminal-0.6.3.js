@@ -1458,6 +1458,7 @@
             return result;
         },
         split_equal_mprat: function(str, length){
+            length = Math.max(1, parseInt(length, 10) || 80);
             var array = [];
             if (str.length > length){
                 var linearray = str.split("\n");
@@ -1474,6 +1475,13 @@
                             while (wordarray.length > 0 && newline.length + wordarray[0].length < length){
                                 newline += wordarray[0] + " ";
                                 wordarray.splice(0, 1);
+                            }
+                            if (newline === "" && wordarray.length > 0) {
+                                newline = wordarray[0].substring(0, length);
+                                wordarray[0] = wordarray[0].substring(length);
+                                if (wordarray[0].length === 0) {
+                                    wordarray.splice(0, 1);
+                                }
                             }
                             array.push(newline);
                         }
