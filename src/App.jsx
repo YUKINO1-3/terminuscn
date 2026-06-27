@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import SceneCanvas from './SceneCanvas'
 
 const legacyScripts = [
   'jquery-1.9.1.min.js',
@@ -71,7 +72,7 @@ export default function App() {
         aria-label={language === 'zh' ? 'Terminus 命令终端' : 'Terminus command terminal'}
       />
       <section id="pics" aria-label={language === 'zh' ? '当前位置' : 'Current location'}>
-        <img id="scene" alt="" />
+        <SceneCanvas language={language} />
       </section>
       {loadError && (
         <div className="load-error" role="alert">
